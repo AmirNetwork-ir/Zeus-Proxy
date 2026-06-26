@@ -68,7 +68,7 @@ export default {
 
                 await new Promise(resolve => setTimeout(resolve, 1000));
 
-                const githubRes = await fetch("https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/zeus.js");
+                const githubRes = await fetch("https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/zeus.js?t=" + Date.now());
                 if (!githubRes.ok) throw new Error("خطا در دریافت سورس از گیت‌هاب.");
                 const zeusCode = await githubRes.text();
 
