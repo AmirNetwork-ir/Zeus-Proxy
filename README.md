@@ -1,37 +1,23 @@
+<img src="https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/photos/dark.png" width="100%" alt="Zeus Panel Dark Mode" style="border-radius: 12px; margin-bottom: 15px;">
 
-
-
-
-  <img width="100%" alt="Zeus Panel Dark Mode" 
-       src="https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/photos/dark.png" 
-       style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); margin-bottom: 15px;" />
-       
-
-  <img width="100%" alt="Zeus Panel Dark Mode" 
-       src="https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/photos/status.png" 
-       style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); margin-bottom: 15px;" />
-       
----
-  <img width="100%" alt="Zeus Panel Interface" 
-       src="https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/photos/deployer.png" 
-       style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); margin-bottom: 15px;" />
-       
-
-  <img width="100%" alt="Zeus Panel Status" 
-       src="https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/photos/updater.png" 
-       style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); margin-bottom: 15px;" />
-       
----
-  <img width="100%" alt="Zeus Panel Dark Mode" 
-       src="https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/photos/add.png" 
-       style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); margin-bottom: 15px;" />
-       
-
-  <img width="100%" alt="Zeus Panel Dark Mode" 
-       src="https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/photos/settings.png" 
-       style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); margin-bottom: 15px;" />
-       
----
+<table width="100%">
+  <tr>
+    <td width="50%" valign="middle" align="center">
+      <img src="https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/photos/add.png" width="100%" alt="Zeus Panel Status" style="border-radius: 12px;">
+    </td>
+    <td width="50%" valign="middle" align="center">
+      <img src="https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/photos/deployer.png" width="100%" alt="Zeus Panel Interface" style="border-radius: 12px;">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="middle" align="center">
+      <img src="https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/photos/updater.png" width="100%" alt="Zeus Panel Status" style="border-radius: 12px;">
+    </td>
+    <td width="50%" valign="middle" align="center">
+      <img src="https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/photos/status.png" width="100%" alt="Zeus Panel Dark Mode" style="border-radius: 12px;">
+    </td>
+  </tr>
+</table>
 
 <div align="center">
   <h1>⚡ پنل زئوس کلودفلر (Zeus Panel)</h1>
