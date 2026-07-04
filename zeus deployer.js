@@ -17,7 +17,7 @@ export default {
 				const accRes = await fetch("https://api.cloudflare.com/client/v4/accounts", { headers });
 				const accData = await accRes.json();
 				if (!accData.success || accData.result.length === 0) {
-					throw new Error("فقط با دکمه نارنجی توکن بسازید.");
+					throw new Error("فقط با دکمه نارنجی «دریافت توکن» توکن بسازید.");
 				}
 				const accountId = accData.result[0].id;
 				let devSub = null;
@@ -378,7 +378,7 @@ function getHtmlContent() {
                 <div class="inline-flex items-center justify-center p-3 bg-blue-950/60 border border-blue-500 text-blue-400 rounded-2xl mb-4 shadow-[0_0_15px_rgba(59,130,246,0.4)]">
                     <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                 </div>
-            <h2 class="text-2xl font-black text-gray-900 dark:text-white mb-2">Zeus Auto Deployer</h2>
+            <h2 class="text-2xl font-black text-gray-900 dark:text-white mb-2">Zeus Panel Deployer</h2>
             <p class="text-sm font-medium text-gray-500 dark:text-zinc-400">نصب خودکار پنل زئوس روی کلودفلر</p>
 			<p class="text-sm font-medium text-gray-500 dark:text-zinc-400">🔥  روزانه 10 الی 100 گیگ کانفیگ رایگان  🔥</p>
         </div>
@@ -851,7 +851,7 @@ async function reloadZeusPanel(scriptName) {
                         '<a href="https://dash.cloudflare.com/?to=/:account/workers/services" target="_blank" class="inline-block bg-red-500 text-white px-4 py-2 rounded-lg font-bold text-xs">مدیریت ورکرها</a>';
                 }
                 else if (errorMsg.includes("اکانتی یافت نشد") || errorMsg.includes("Authentication") || errorMsg.includes("Invalid")) {
-                    errorBox.innerHTML = '<div class="mb-2 font-bold">توکن نامعتبر است یا دسترسی ندارد.</div>' +
+                    errorBox.innerHTML = '<div class="mb-2 font-bold">توکن دسترسی ندارد لطفا فقط با دکمه نارنجی «دریافت توکن» کار کنید.</div>' +
                         '<div class="text-[11px] opacity-70 mb-3" dir="ltr">' + rawError + '</div>' +
                         '<a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" class="inline-block bg-red-500 text-white px-4 py-2 rounded-lg font-bold text-xs">مدیریت توکن‌ها</a>';
                 }
