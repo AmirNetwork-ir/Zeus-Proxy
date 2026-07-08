@@ -1,4 +1,13 @@
+<div align="center">
 
+# 🛑 توجه بسیار مهم 🛑
+
+### پروژه توسط کلودفلر شناسایی و مسدود میشه.
+**صبوری کنید راهی پیدا کنم براش.**
+
+</div>
+
+---
 <img src="https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/photos/dark.png" width="100%" alt="Zeus Panel Dark Mode" style="border-radius: 12px; margin-bottom: 15px;">
 
 <table width="100%">
