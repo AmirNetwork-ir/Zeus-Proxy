@@ -1,4 +1,4 @@
-VERSION=1.0.2
+VERSION=1.0.0
 <div class="space-y-4 text-center">
     <p class="text-sm text-gray-600 dark:text-gray-400 font-medium leading-relaxed">
         اگر سرور دارید با اهدای پروکسی اختصاصی به پروژه میتونید کمک کنید مردم بیشتری متصل بشن
