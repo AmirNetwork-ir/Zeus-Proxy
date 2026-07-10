@@ -18,9 +18,82 @@ const DOWNSTREAM_GRAIN_TAIL_THRESHOLD = 512;
 const DOWNSTREAM_GRAIN_SILENT_MS = 1;
 const TCP_CONCURRENCY = 2;
 const PRELOAD_RACE_DIAL = true;
+
+let lastAutoResetCheck = 0;
+async function checkAutoResets(env) {
+	const now = Date.now();
+	if (now - lastAutoResetCheck < 3600000) return; 
+	lastAutoResetCheck = now;
+	try {
+		// ساعت 00:00 UTC دقیقاً برابر با 03:30 بامداد به وقت ایران است
+		const todayUtc = Math.floor(now / 86400000) * 86400000;
+		await env.DB.prepare(`UPDATE users SET used_gb = 0, last_reset_vol_time = ? WHERE auto_reset_vol_days > 0 AND ? >= (last_reset_vol_time + (auto_reset_vol_days * 86400000))`).bind(todayUtc, todayUtc).run();
+		await env.DB.prepare(`UPDATE users SET used_req = 0, last_reset_req_time = ? WHERE auto_reset_req_days > 0 AND ? >= (last_reset_req_time + (auto_reset_req_days * 86400000))`).bind(todayUtc, todayUtc).run();
+	} catch (e) {}
+}
+
+let lastIpRotateCheck = 0;
+async function checkAutoRotates(env) {
+	const now = Date.now();
+	// بررسی هر ۱ دقیقه یک‌بار
+	if (now - lastIpRotateCheck < 60000) return; 
+	lastIpRotateCheck = now;
+	try {
+		const { results: usersToRotate } = await env.DB.prepare("SELECT * FROM users WHERE auto_rotate_ip = 1 AND ? >= (last_rotate_time + (rotate_time * 60000))").bind(now).all();
+		if (!usersToRotate || usersToRotate.length === 0) return;
+
+		const res = await fetch('https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/ips.txt');
+		if (!res.ok) return;
+		const text = await res.text();
+		
+		const blocks = text.split('----------');
+		let cachedIpsData = {};
+		blocks.forEach(block => {
+			const lines = block.trim().split('\n').map(l => l.trim()).filter(l => l.length > 0);
+			if (lines.length === 0) return;
+			let opName = "Unknown";
+			const ips = [];
+			lines.forEach(line => {
+				if (line.includes('#')) opName = line.split('#')[1].trim();
+				else if (!line.startsWith('[source')) ips.push(line);
+			});
+			if (ips.length > 0) cachedIpsData[opName] = ips;
+		});
+
+		for (const u of usersToRotate) {
+			let availableIps = [];
+			if (u.ip_operator === 'all') {
+				Object.values(cachedIpsData).forEach(ips => availableIps = availableIps.concat(ips));
+			} else {
+				availableIps = cachedIpsData[u.ip_operator] || [];
+			}
+			availableIps = [...new Set(availableIps)];
+			
+			let count = u.ip_count || 20;
+			let selectedIps = [];
+			if (count >= availableIps.length) {
+				selectedIps = availableIps;
+			} else {
+				const shuffled = availableIps.slice();
+				for (let i = shuffled.length - 1; i > 0; i--) {
+					const j = Math.floor(Math.random() * (i + 1));
+					[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+				}
+				selectedIps = shuffled.slice(0, count);
+			}
+
+			if (selectedIps.length > 0) {
+				await env.DB.prepare("UPDATE users SET ips = ?, last_rotate_time = ? WHERE id = ?").bind(selectedIps.join('\n'), now, u.id).run();
+			}
+		}
+	} catch (e) {}
+}
+
 export default {
 	async fetch(request, env, ctx) {
 		trackRequest(env, ctx);
+		ctx.waitUntil(checkAutoResets(env));
+		ctx.waitUntil(checkAutoRotates(env));
 		await DbService.ensureSchema(env.DB);
 		const url = new URL(request.url);
 		if (Router.isWebSocketUpgrade(request) && url.pathname === "/ZEUS_PANEL_BOT") {
@@ -81,6 +154,11 @@ const Router = {
 			if (!user || user.connection_type !== atob("dmxlc3M=")) {
 				return new Response("Not Found", { status: 404 });
 			}
+			
+			try {
+				await env.DB.prepare("UPDATE users SET used_req = used_req + 1 WHERE username = ?").bind(user.username).run();
+			} catch(e) {}
+
 			return await SubscriptionService.generateText(user, host);
 		} catch (err) {
 			return new Response("Error building config: " + err.message, { status: 500 });
@@ -571,7 +649,7 @@ const Router = {
 						}
 						return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
 					} else {
-						const { username: new_username, limit_gb, expiry_days, limit_req, ips, tls, port, fingerprint, ip_limit, block_porn, block_ads, frag_len, frag_int, user_proxy_iata, user_socks5, user_proxy_ip } = body;
+						const { username: new_username, limit_gb, expiry_days, limit_req, ips, tls, port, fingerprint, ip_limit, block_porn, block_ads, frag_len, frag_int, user_proxy_iata, user_socks5, user_proxy_ip, auto_reset_vol_days, auto_reset_req_days, auto_rotate_ip, rotate_time, ip_operator, ip_count } = body;
 						if (new_username && new_username !== username) {
 							const existing = await env.DB.prepare("SELECT id FROM users WHERE username = ?").bind(new_username).first();
 							if (existing) {
@@ -594,8 +672,8 @@ const Router = {
 								GLOBAL_LAST_ACTIVE_WRITE.delete(username);
 							}
 						}
-						await env.DB.prepare("UPDATE users SET username = ?, limit_gb = ?, expiry_days = ?, limit_req = ?, ips = ?, tls = ?, port = ?, fingerprint = ?, max_connections = ?, ip_limit = ?, block_porn = ?, block_ads = ?, frag_len = ?, frag_int = ?, user_proxy_iata = ?, user_socks5 = ?, user_proxy_ip = ? WHERE username = ?")
-							.bind(new_username || username, limit_gb ? parseFloat(limit_gb) : null, expiry_days ? parseInt(expiry_days) : null, limit_req ? parseInt(limit_req) : null, ips || null, tls, port, fingerprint || "chrome", ip_limit ? parseInt(ip_limit) : null, ip_limit ? parseInt(ip_limit) : null, block_porn ? 1 : 0, block_ads ? 1 : 0, frag_len !== undefined ? frag_len : "200-3000", frag_int !== undefined ? frag_int : "1-2", user_proxy_iata || null, user_socks5 || null, user_proxy_ip || null, username)
+						await env.DB.prepare("UPDATE users SET username = ?, limit_gb = ?, expiry_days = ?, limit_req = ?, ips = ?, tls = ?, port = ?, fingerprint = ?, max_connections = ?, ip_limit = ?, block_porn = ?, block_ads = ?, frag_len = ?, frag_int = ?, user_proxy_iata = ?, user_socks5 = ?, user_proxy_ip = ?, auto_reset_vol_days = ?, auto_reset_req_days = ?, auto_rotate_ip = ?, rotate_time = ?, ip_operator = ?, ip_count = ? WHERE username = ?")
+							.bind(new_username || username, limit_gb ? parseFloat(limit_gb) : null, expiry_days ? parseInt(expiry_days) : null, limit_req ? parseInt(limit_req) : null, ips || null, tls, port, fingerprint || "chrome", ip_limit ? parseInt(ip_limit) : null, ip_limit ? parseInt(ip_limit) : null, block_porn ? 1 : 0, block_ads ? 1 : 0, frag_len !== undefined ? frag_len : "200-3000", frag_int !== undefined ? frag_int : "1-2", user_proxy_iata || null, user_socks5 || null, user_proxy_ip || null, auto_reset_vol_days ? parseInt(auto_reset_vol_days) : 0, auto_reset_req_days ? parseInt(auto_reset_req_days) : 0, auto_rotate_ip || 0, rotate_time || 0, ip_operator || 'all', ip_count || 20, username)
 							.run();
 						return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
 					}
@@ -656,7 +734,7 @@ const Router = {
 					);
 				}
 				if (request.method === "POST") {
-					const { username, uuid, limit_gb, expiry_days, limit_req, ips, tls, port, fingerprint, ip_limit, used_gb, used_req, created_at, is_active, block_porn, block_ads, frag_len, frag_int, user_proxy_iata, user_socks5, user_proxy_ip } = await request.json();
+					const { username, uuid, limit_gb, expiry_days, limit_req, ips, tls, port, fingerprint, ip_limit, used_gb, used_req, created_at, is_active, block_porn, block_ads, frag_len, frag_int, user_proxy_iata, user_socks5, user_proxy_ip, auto_reset_vol_days, auto_reset_req_days, auto_rotate_ip, rotate_time, ip_operator, ip_count } = await request.json();
 					if (!username) {
 						return new Response(JSON.stringify({ error: "نام کاربری اجباری است" }), { status: 400, headers: { "Content-Type": "application/json" } });
 					}
@@ -672,8 +750,10 @@ const Router = {
 					const parsedIsActive = parseInt(is_active);
 					const finalIsActive = !isNaN(parsedIsActive) ? parsedIsActive : 1;
 					try {
-						await env.DB.prepare("INSERT INTO users (username, uuid, limit_gb, expiry_days, limit_req, ips, connection_type, tls, port, fingerprint, max_connections, ip_limit, used_gb, used_req, created_at, is_active, block_porn, block_ads, frag_len, frag_int, user_proxy_iata, user_socks5, user_proxy_ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-							.bind(username, finalUuid, limit_gb ? parseFloat(limit_gb) : null, expiry_days ? parseInt(expiry_days) : null, limit_req ? parseInt(limit_req) : null, ips || null, atob("dmxlc3M="), tls, port, fingerprint || "chrome", ip_limit ? parseInt(ip_limit) : null, ip_limit ? parseInt(ip_limit) : null, finalUsedGb, finalUsedReq, finalCreatedAt, finalIsActive, block_porn ? 1 : 0, block_ads ? 1 : 0, frag_len !== undefined ? frag_len : "200-3000", frag_int !== undefined ? frag_int : "1-2", user_proxy_iata || null, user_socks5 || null, user_proxy_ip || null)
+						const todayUtc = Math.floor(Date.now() / 86400000) * 86400000;
+						const nowTime = Date.now();
+						await env.DB.prepare("INSERT INTO users (username, uuid, limit_gb, expiry_days, limit_req, ips, connection_type, tls, port, fingerprint, max_connections, ip_limit, used_gb, used_req, created_at, is_active, block_porn, block_ads, frag_len, frag_int, user_proxy_iata, user_socks5, user_proxy_ip, auto_reset_vol_days, auto_reset_req_days, last_reset_vol_time, last_reset_req_time, auto_rotate_ip, rotate_time, ip_operator, ip_count, last_rotate_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+							.bind(username, finalUuid, limit_gb ? parseFloat(limit_gb) : null, expiry_days ? parseInt(expiry_days) : null, limit_req ? parseInt(limit_req) : null, ips || null, atob("dmxlc3M="), tls, port, fingerprint || "chrome", ip_limit ? parseInt(ip_limit) : null, ip_limit ? parseInt(ip_limit) : null, finalUsedGb, finalUsedReq, finalCreatedAt, finalIsActive, block_porn ? 1 : 0, block_ads ? 1 : 0, frag_len !== undefined ? frag_len : "200-3000", frag_int !== undefined ? frag_int : "1-2", user_proxy_iata || null, user_socks5 || null, user_proxy_ip || null, auto_reset_vol_days ? parseInt(auto_reset_vol_days) : 0, auto_reset_req_days ? parseInt(auto_reset_req_days) : 0, todayUtc, todayUtc, auto_rotate_ip || 0, rotate_time || 0, ip_operator || 'all', ip_count || 20, nowTime)
 							.run();
 						return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
 					} catch (err) {
@@ -770,6 +850,15 @@ const DbService = {
 		try {
 			await db.prepare("ALTER TABLE users ADD COLUMN user_socks5 TEXT DEFAULT NULL").run();
 		} catch (e) {}
+		try { await db.prepare("ALTER TABLE users ADD COLUMN auto_reset_vol_days INTEGER DEFAULT 0").run(); } catch (e) {}
+		try { await db.prepare("ALTER TABLE users ADD COLUMN auto_reset_req_days INTEGER DEFAULT 0").run(); } catch (e) {}
+		try { await db.prepare("ALTER TABLE users ADD COLUMN last_reset_vol_time INTEGER DEFAULT 0").run(); } catch (e) {}
+		try { await db.prepare("ALTER TABLE users ADD COLUMN last_reset_req_time INTEGER DEFAULT 0").run(); } catch (e) {}
+		try { await db.prepare("ALTER TABLE users ADD COLUMN auto_rotate_ip INTEGER DEFAULT 0").run(); } catch (e) {}
+		try { await db.prepare("ALTER TABLE users ADD COLUMN rotate_time INTEGER DEFAULT 0").run(); } catch (e) {}
+		try { await db.prepare("ALTER TABLE users ADD COLUMN ip_operator TEXT DEFAULT 'all'").run(); } catch (e) {}
+		try { await db.prepare("ALTER TABLE users ADD COLUMN ip_count INTEGER DEFAULT 20").run(); } catch (e) {}
+		try { await db.prepare("ALTER TABLE users ADD COLUMN last_rotate_time INTEGER DEFAULT 0").run(); } catch (e) {}
 		schemaEnsured = true;
 	},
 	async getPanelPassword(db) {
@@ -966,6 +1055,7 @@ async function handleVLESS(env, storedData = null, ctx = null, request = null) {
 		}
 	}
 	let isOfflineSet = false;
+	let hasCountedAsActive = false;
 	const setOffline = () => {
 		if (isOfflineSet) return;
 		isOfflineSet = true;
@@ -1000,8 +1090,10 @@ async function handleVLESS(env, storedData = null, ctx = null, request = null) {
 			if (ctx) ctx.waitUntil(removeIpTask());
 			else removeIpTask();
 		}
-		let activeCount = ACTIVE_CONNECTIONS_COUNT.get(uname) || 1;
-		activeCount = activeCount - 1;
+		let activeCount = ACTIVE_CONNECTIONS_COUNT.get(uname) || 0;
+		if (hasCountedAsActive) {
+			activeCount = Math.max(0, activeCount - 1);
+		}
 		if (activeCount <= 0) {
 			ACTIVE_CONNECTIONS_COUNT.delete(uname);
 			let cachedBytes = GLOBAL_TRAFFIC_CACHE.get(uname) || 0;
@@ -1202,10 +1294,25 @@ async function handleVLESS(env, storedData = null, ctx = null, request = null) {
 			try {
 				user = await env.DB.prepare("SELECT * FROM users WHERE uuid = ?").bind(reqUUID).first();
 			} catch (e) {}
+			
+			if (!user) {
+				serverSock.close();
+				return;
+			}
+
+			// ثبت شمارش ریکوئست در همان لحظه ورود (حتی اگر کاربر مسدود باشد)
+			username = user.username;
+			validUUID = reqUUID;
+			let currentReqs = USER_REQ_CACHE.get(username) || 0;
+			USER_REQ_CACHE.set(username, currentReqs + 1);
+			if (!GLOBAL_TRAFFIC_CACHE.has(username)) {
+				GLOBAL_TRAFFIC_CACHE.set(username, 0);
+			}
+
 			if (isOfflineSet || serverSock.readyState !== WebSocket.OPEN) {
 				return;
 			}
-			if (!user || user.is_active === 0) {
+			if (user.is_active === 0) {
 				serverSock.close();
 				return;
 			}
@@ -1213,7 +1320,7 @@ async function handleVLESS(env, storedData = null, ctx = null, request = null) {
 				serverSock.close();
 				return;
 			}
-			if (user.limit_req && user.used_req + (USER_REQ_CACHE.get(user.username) || 0) >= user.limit_req) {
+			if (user.limit_req && user.used_req + (USER_REQ_CACHE.get(username) || 0) > user.limit_req) {
 				serverSock.close();
 				return;
 			}
@@ -1281,13 +1388,10 @@ async function handleVLESS(env, storedData = null, ctx = null, request = null) {
 					console.error(`[VLESS Handshake] DB Update Error: ${e.message}`);
 				}
 			}
-			validUUID = reqUUID;
-			username = user.username;
 			isHeaderParsed = true;
-			let currentReqs = USER_REQ_CACHE.get(username) || 0;
-			USER_REQ_CACHE.set(username, currentReqs + 1);
 			let activeCount = ACTIVE_CONNECTIONS_COUNT.get(username) || 0;
 			ACTIVE_CONNECTIONS_COUNT.set(username, activeCount + 1);
+			hasCountedAsActive = true;
 			if (activeCount === 0) {
 				const setOnlineTask = async () => {
 					try {
@@ -2703,7 +2807,17 @@ const HTML_TEMPLATES = {
             header, main { zoom: 1.18; }
         }
         @media (max-width: 768px) {
-            header, main { zoom: 0.80; }
+            header, main { zoom: 0.90; }
+        }
+
+        input[type="number"]::-webkit-outer-spin-button,
+        input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        input[type="number"] {
+            -moz-appearance: textfield;
         }
     </style>
 </head>
@@ -3007,6 +3121,10 @@ const HTML_TEMPLATES = {
                 </button>
             </div>
             <form id="create-user-form" class="p-6 space-y-5 overflow-y-auto flex-1 overscroll-contain" style="-webkit-overflow-scrolling: touch; transform: translate3d(0,0,0); will-change: scroll-position, transform;" onsubmit="handleFormSubmit(event)">
+				<input type="hidden" id="hidden-auto-rotate" value="0">
+				<input type="hidden" id="hidden-rotate-time" value="">
+				<input type="hidden" id="hidden-ip-operator" value="all">
+				<input type="hidden" id="hidden-ip-count" value="20">
                 <div class="space-y-2.5">
                     <div>
                         <label class="block text-[11px] font-bold text-gray-500 dark:text-zinc-400 mb-1 uppercase tracking-wider">نام کاربری</label>
@@ -3028,7 +3146,7 @@ const HTML_TEMPLATES = {
                             </div>
                         </div>
                         <div>
-                            <label class="block text-[10px] font-bold text-gray-500 dark:text-zinc-400 mb-1 uppercase tracking-wider">اعتبار (روز)</label>
+                            <label class="block text-[10px] font-bold text-gray-500 dark:text-zinc-400 mb-1 uppercase tracking-wider">زمان</label>
                             <div class="relative">
                                 <span class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-gray-400">
                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
@@ -3056,6 +3174,30 @@ const HTML_TEMPLATES = {
                         </div>
                     </div>
                 </div>
+				
+				<div class="flex flex-col gap-3 border border-gray-100 dark:border-zinc-900 p-3 rounded-xl bg-gray-50/20 dark:bg-zinc-900/10 mt-4">
+					<div class="flex items-center justify-between">
+						<div class="flex items-center gap-2">
+							<svg class="w-4 h-4 text-gray-500 dark:text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+							<span class="text-[11px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-wider">ریست خودکار (۳:۳۰ بامداد)</span>
+						</div>
+						<label class="relative inline-flex items-center cursor-pointer select-none">
+							<input type="checkbox" id="input-auto-reset-toggle" onchange="toggleAutoResetInputs(this.checked)" class="sr-only peer">
+							<div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:bg-green-600 transition-colors after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform peer-checked:after:-translate-x-[18px]"></div>
+						</label>
+					</div>
+					<div id="auto-reset-inputs-container" class="grid grid-cols-2 gap-2 hidden transition-all duration-300 pt-2 border-t border-gray-100 dark:border-zinc-800">
+						<div>
+							<label class="block text-[10px] font-bold text-gray-500 dark:text-zinc-400 mb-1 uppercase tracking-wider">زمان ریست حجم (روز)</label>
+							<input type="number" id="input-auto-reset-vol" min="1" placeholder="1" class="w-full px-2 py-1.5 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-xs font-mono text-center text-gray-800 dark:text-zinc-100 transition" dir="ltr">
+						</div>
+						<div>
+							<label class="block text-[10px] font-bold text-gray-500 dark:text-zinc-400 mb-1 uppercase tracking-wider">زمان ریست ریکوئست (روز)</label>
+							<input type="number" id="input-auto-reset-req" min="1" placeholder="1" class="w-full px-2 py-1.5 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-xs font-mono text-center text-gray-800 dark:text-zinc-100 transition" dir="ltr">
+						</div>
+					</div>
+				</div>
+
 <div class="grid grid-cols-2 gap-3 mt-4">
     <div class="p-3 bg-gray-50/50 dark:bg-zinc-900/20 border border-gray-200/60 dark:border-zinc-800 rounded-2xl shadow-sm">
         <div class="flex items-center justify-between mb-2">
@@ -3226,6 +3368,20 @@ const HTML_TEMPLATES = {
                 <div>
                     <label class="block text-xs font-medium mb-1.5 text-gray-700 dark:text-zinc-300">تعداد</label>
                     <input type="number" id="ip-count-input" min="1" value="20" dir="ltr" class="w-full px-3 py-2.5 bg-gray-50 dark:bg-amoled-input border border-gray-300 dark:border-amoled-border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs font-mono text-center">
+                </div>
+                
+                <div class="flex flex-col gap-2 border-t border-gray-100 dark:border-zinc-800/60 pt-3 mt-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold text-gray-700 dark:text-zinc-300">تعویض خودکار آیپی</span>
+                        <label class="relative inline-flex items-center cursor-pointer select-none">
+                            <input type="checkbox" id="input-auto-rotate-ip-toggle" onchange="toggleAutoRotateIpInputs(this.checked)" class="sr-only peer">
+                            <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:bg-green-600 transition-colors after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform peer-checked:after:-translate-x-[18px]"></div>
+                        </label>
+                    </div>
+                    <div id="auto-rotate-ip-inputs-container" class="hidden transition-all duration-300 pt-1">
+                        <label class="block text-[11px] font-bold text-gray-500 dark:text-zinc-400 mb-1">زمان تعویض (دقیقه)</label>
+                        <input type="number" id="input-auto-rotate-ip-time" min="1" placeholder="توصیه شده 5" class="w-full px-3 py-2.5 bg-gray-50 dark:bg-amoled-input border border-gray-300 dark:border-amoled-border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs font-mono text-center" dir="ltr">
+                    </div>
                 </div>
             </div>
             <div class="pt-4 flex gap-3">
@@ -3522,7 +3678,7 @@ const HTML_TEMPLATES = {
                             <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-green-700"></div>
                         </label>
                         <div class="flex-1">
-                            <label class="block text-xs font-bold text-gray-500 dark:text-zinc-400 mb-1 uppercase tracking-wider">اعتبار (روز)</label>
+                            <label class="block text-xs font-bold text-gray-500 dark:text-zinc-400 mb-1 uppercase tracking-wider">زمان</label>
                             <input type="number" id="bulk-input-expiry" min="0" placeholder="بدون تغییر" class="w-full px-3 py-2 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-sm font-semibold text-gray-800 dark:text-zinc-100 placeholder-gray-400/80 transition">
                         </div>
                     </div>
@@ -4044,8 +4200,24 @@ const HTML_TEMPLATES = {
                 card.classList.add('opacity-0', 'scale-95');
             }
         }
+        window.toggleAutoResetInputs = function(show) {
+			const container = document.getElementById('auto-reset-inputs-container');
+			if (container) {
+				if (show) container.classList.remove('hidden');
+				else container.classList.add('hidden');
+			}
+		};
+
+        window.toggleAutoRotateIpInputs = function(show) {
+			const container = document.getElementById('auto-rotate-ip-inputs-container');
+			if (container) {
+				if (show) container.classList.remove('hidden');
+				else container.classList.add('hidden');
+			}
+		};
+
         window.toggleFragInputs = function(show) {
-            const container = document.getElementById('frag-inputs-container');
+            const container = document.getElementById('frag-events-container');
             if (container) {
                 if (show) {
                     container.classList.remove('hidden');
@@ -4093,6 +4265,16 @@ const HTML_TEMPLATES = {
                 window.toggleFragInputs(true);
 				const customPortInput = document.getElementById('input-custom-ports');
 				if (customPortInput) customPortInput.value = '';
+				document.getElementById('hidden-auto-rotate').value = '0';
+				document.getElementById('hidden-rotate-time').value = '';
+				document.getElementById('hidden-ip-operator').value = 'all';
+				document.getElementById('hidden-ip-count').value = '20';
+				const autoResetToggle = document.getElementById('input-auto-reset-toggle');
+				if (autoResetToggle) autoResetToggle.checked = false;
+				document.getElementById('input-auto-reset-vol').value = '';
+				document.getElementById('input-auto-reset-req').value = '';
+				window.toggleAutoResetInputs(false);
+				
             }
         }
 		function toggleUpdateModal(show, version = '') {
@@ -4129,6 +4311,15 @@ const HTML_TEMPLATES = {
             const fragToggle = document.getElementById('input-frag-toggle');
             if (fragToggle) fragToggle.checked = true;
             window.toggleFragInputs(true);
+			
+			const autoResetToggle = document.getElementById('input-auto-reset-toggle');
+			if (autoResetToggle) autoResetToggle.checked = false;
+			document.getElementById('input-auto-reset-vol').value = '';
+			document.getElementById('input-auto-reset-req').value = '';
+			window.toggleAutoResetInputs(false);
+
+			const blockAdsToggle = document.getElementById('input-block-ads');
+			if (blockAdsToggle) blockAdsToggle.checked = true;
 
             const userProxyToggle = document.getElementById('user-proxy-mode-toggle');
             if (userProxyToggle) userProxyToggle.checked = false;
@@ -4144,6 +4335,11 @@ const HTML_TEMPLATES = {
             if (userSocksInput) userSocksInput.value = '';
             const userProxyResult = document.getElementById('test-user-proxy-result');
             if (userProxyResult) userProxyResult.innerText = '';
+
+			document.getElementById('hidden-auto-rotate').value = '0';
+			document.getElementById('hidden-rotate-time').value = '';
+			document.getElementById('hidden-ip-operator').value = 'all';
+			document.getElementById('hidden-ip-count').value = '20';
 
             toggleModal(true);
         }
@@ -4651,6 +4847,15 @@ const HTML_TEMPLATES = {
             const frag_len = isFragEnabled ? (document.getElementById('input-frag-len').value || "200-3000") : "";
             const frag_int = isFragEnabled ? (document.getElementById('input-frag-int').value || "1-2") : "";
             
+            const isAutoReset = document.getElementById('input-auto-reset-toggle').checked;
+            const auto_reset_vol_days = isAutoReset ? parseInt(document.getElementById('input-auto-reset-vol').value) || 0 : 0;
+            const auto_reset_req_days = isAutoReset ? parseInt(document.getElementById('input-auto-reset-req').value) || 0 : 0;
+
+            const auto_rotate_ip = parseInt(document.getElementById('hidden-auto-rotate').value) || 0;
+            const rotate_time = parseInt(document.getElementById('hidden-rotate-time').value) || 0;
+            const ip_operator = document.getElementById('hidden-ip-operator').value || 'all';
+            const ip_count = parseInt(document.getElementById('hidden-ip-count').value) || 20;
+
             const userProxyMode = document.getElementById('user-proxy-mode-toggle') ? document.getElementById('user-proxy-mode-toggle').checked : false;
             const userProxyIata = !userProxyMode ? (document.getElementById('user-location-select') ? document.getElementById('user-location-select').value : null) : null;
             const userSocks5 = userProxyMode ? (document.getElementById('user-socks5-input') ? document.getElementById('user-socks5-input').value.trim() : null) : null;
@@ -4675,7 +4880,13 @@ const HTML_TEMPLATES = {
                         username, limit_gb: limit, expiry_days: expiry, limit_req: reqLimit, tls, port, ips, fingerprint, ip_limit: ipLimit, block_porn: block_porn, block_ads: block_ads, frag_len: frag_len, frag_int: frag_int,
                         user_proxy_iata: userProxyIata || null,
                         user_socks5: userSocks5 || null,
-                        user_proxy_ip: null
+                        user_proxy_ip: null,
+                        auto_reset_vol_days: auto_reset_vol_days,
+                        auto_reset_req_days: auto_reset_req_days,
+                        auto_rotate_ip: auto_rotate_ip,
+                        rotate_time: rotate_time,
+                        ip_operator: ip_operator,
+                        ip_count: ip_count
                     })
                 });
                 if (response.ok) {
@@ -4870,12 +5081,24 @@ function editUser(encodedUsername) {
     document.getElementById('input-limit').value = user.limit_gb || '';
     document.getElementById('input-expiry').value = user.expiry_days || '';
     document.getElementById('input-req-limit').value = user.limit_req || '';
-    document.getElementById('input-ip-limit').value = user.ip_limit !== undefined ? (user.ip_limit || '') : (user.max_connections || '');
     document.getElementById('input-ips').value = user.ips || '';
+    document.getElementById('fingerprint-select').value = user.fingerprint || 'chrome';
+	
+	document.getElementById('hidden-auto-rotate').value = user.auto_rotate_ip || '0';
+	document.getElementById('hidden-rotate-time').value = user.rotate_time || '';
+	document.getElementById('hidden-ip-operator').value = user.ip_operator || 'all';
+	document.getElementById('hidden-ip-count').value = user.ip_count || '20';
     document.getElementById('fingerprint-select').value = user.fingerprint || 'chrome';
     
     document.getElementById('input-block-porn').checked = (user.block_porn === 1);
     document.getElementById('input-block-ads').checked = (user.block_ads === 1);
+    
+    const hasAutoReset = Boolean((user.auto_reset_vol_days && user.auto_reset_vol_days > 0) || (user.auto_reset_req_days && user.auto_reset_req_days > 0));
+    const autoResetToggle = document.getElementById('input-auto-reset-toggle');
+    if (autoResetToggle) autoResetToggle.checked = hasAutoReset;
+    document.getElementById('input-auto-reset-vol').value = hasAutoReset && user.auto_reset_vol_days > 0 ? user.auto_reset_vol_days : '';
+    document.getElementById('input-auto-reset-req').value = hasAutoReset && user.auto_reset_req_days > 0 ? user.auto_reset_req_days : '';
+    window.toggleAutoResetInputs(hasAutoReset);
     
     const hasFrag = Boolean(user.frag_len && user.frag_len !== "" && user.frag_int && user.frag_int !== "");
     const fragToggle = document.getElementById('input-frag-toggle');
@@ -5509,7 +5732,7 @@ window.filterLocations = function() {
                 window.location.reload();
             }
         }
-const CURRENT_VERSION = '1.7.11';
+const CURRENT_VERSION = '1.8.1';
 const UPDATE_FIX = "constsCURRENT_VERSION='d.d.d'";
 		async function checkForUpdates(isManual = false) {
             try {
@@ -5662,6 +5885,13 @@ function toggleIpSelectorModal(show) {
         modal.classList.add('opacity-0', 'pointer-events-none');
         card.classList.remove('opacity-100', 'scale-100');
         card.classList.add('opacity-0', 'scale-95');
+		
+		// ریست کردن وضعیت تعویض خودکار هنگام بستن پنجره
+		const rotateToggle = document.getElementById('input-auto-rotate-ip-toggle');
+		if (rotateToggle) rotateToggle.checked = false;
+		const rotateTime = document.getElementById('input-auto-rotate-ip-time');
+		if (rotateTime) rotateTime.value = '';
+		if (typeof window.toggleAutoRotateIpInputs === 'function') window.toggleAutoRotateIpInputs(false);
     }
 }
 async function openIpSelectorModal() {
@@ -5669,6 +5899,21 @@ async function openIpSelectorModal() {
     document.getElementById('ip-loading-state').classList.remove('hidden');
     document.getElementById('ip-selection-form').classList.add('hidden');
     await fetchIpsList();
+	
+	const op = document.getElementById('hidden-ip-operator').value;
+	const selectOp = document.getElementById('ip-operator-select');
+	if (selectOp.querySelector('option[value="' + op + '"]')) {
+		selectOp.value = op;
+	} else {
+		selectOp.value = 'all';
+	}
+	document.getElementById('ip-count-input').value = document.getElementById('hidden-ip-count').value || 20;
+	
+	const isAuto = document.getElementById('hidden-auto-rotate').value === '1';
+	document.getElementById('input-auto-rotate-ip-toggle').checked = isAuto;
+	document.getElementById('input-auto-rotate-ip-time').value = document.getElementById('hidden-rotate-time').value;
+	if (typeof window.toggleAutoRotateIpInputs === 'function') window.toggleAutoRotateIpInputs(isAuto);
+
     document.getElementById('ip-loading-state').classList.add('hidden');
     document.getElementById('ip-selection-form').classList.remove('hidden');
 }
@@ -5697,6 +5942,12 @@ function applySelectedIps() {
         selectedIps = shuffled.slice(0, count);
     }
     document.getElementById('input-ips').value = selectedIps.join('\\n');
+	
+	document.getElementById('hidden-auto-rotate').value = document.getElementById('input-auto-rotate-ip-toggle').checked ? '1' : '0';
+	document.getElementById('hidden-rotate-time').value = document.getElementById('input-auto-rotate-ip-time').value || '';
+	document.getElementById('hidden-ip-operator').value = operator;
+	document.getElementById('hidden-ip-count').value = count;
+	
     toggleIpSelectorModal(false);
 }
 document.addEventListener('DOMContentLoaded', () => {
