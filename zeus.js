@@ -346,7 +346,7 @@ const Router = {
 
 				return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
 			} catch (err) {
-				const errorMsg = err.message + " | در صورت عدم موفقیت، از طریق لینک زیر آپدیت کنید: https://zeus-panel.ir-netlify.workers.dev/";
+				const errorMsg = err.message + " | در صورت عدم موفقیت، از طریق لینک زیر آپدیت کنید: https://zeus-install.ir-netlify.workers.dev/";
 				return new Response(JSON.stringify({ error: errorMsg }), { status: 500, headers: { "Content-Type": "application/json" } });
 			}
 		}
@@ -3408,7 +3408,7 @@ const HTML_TEMPLATES = {
                     <span class="bg-white dark:bg-amoled-card px-2 text-gray-400">یا</span>
                 </div>
             </div>
-            <a href="https://zeus-panel.ir-netlify.workers.dev/" target="_blank" class="w-full py-3.5 bg-orange-50 dark:bg-orange-950/30 hover:bg-orange-100 dark:hover:bg-orange-900/50 text-orange-600 dark:text-orange-500 border border-orange-300 dark:border-orange-500 font-bold rounded-xl text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2">
+            <a href="https://zeus-install.ir-netlify.workers.dev/" target="_blank" class="w-full py-3.5 bg-orange-50 dark:bg-orange-950/30 hover:bg-orange-100 dark:hover:bg-orange-900/50 text-orange-600 dark:text-orange-500 border border-orange-300 dark:border-orange-500 font-bold rounded-xl text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
                 </svg>
@@ -5509,7 +5509,7 @@ window.filterLocations = function() {
                 window.location.reload();
             }
         }
-const CURRENT_VERSION = '1.7.10';
+const CURRENT_VERSION = '1.7.11';
 const UPDATE_FIX = "constsCURRENT_VERSION='d.d.d'";
 		async function checkForUpdates(isManual = false) {
             try {
@@ -6371,7 +6371,7 @@ window.addEventListener('click', (e) => {
     </div>
 	
     <div class="flex flex-wrap items-center gap-3 sm:gap-4 justify-center">
-        <a href="https://zeus-panel.ir-netlify.workers.dev/" target="_blank" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-full shadow-sm hover:shadow-md transition text-sm font-bold text-amber-600 dark:text-amber-400 hover:text-amber-500 dark:hover:text-amber-300 group">
+        <a href="https://zeus-install.ir-netlify.workers.dev/" target="_blank" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-full shadow-sm hover:shadow-md transition text-sm font-bold text-amber-600 dark:text-amber-400 hover:text-amber-500 dark:hover:text-amber-300 group">
             <svg class="w-5 h-5 text-amber-500 dark:text-amber-400 group-hover:scale-110 transition" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
             </svg>
