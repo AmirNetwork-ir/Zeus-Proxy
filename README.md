@@ -235,7 +235,7 @@
 
 <p  align="center"><a  href="https://donatonion.ir-netlify.workers.dev"><b>https://donatonion.ir-netlify.workers.dev</b></a></p>
 
-<p  align="center"><a  href="https://daramet.com/ir_netlify"><b>https://daramet.com/ir_netlify</b></a></p>
+<p  align="center"><a  href="https://daramet.com/ir_netlify"><b>https://daramet.com/ir_netlify</b></a> ریالی </p>
 
 <p  align="center"> از حمایت شما برای زنده نگه‌داشتن و توسعه این پروژه منبع‌باز متشکریم 🙏</p>
 
